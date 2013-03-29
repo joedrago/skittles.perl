@@ -1,0 +1,182 @@
+# ------------------------------------------------------------------------------
+# Sample skittlesrc
+# 
+# All of Skittles' reactions are just replies to "triggers". A trigger can
+# be what someone says, who says it, or a combination of those. As all
+# triggers use regular expressions, you can detect complicated patterns
+# in chat messages, and even capture portions of the text for mods to use.
+# This file provides the list of sets that make up Skittles' brain. Any line
+# beginning with a '#' is treated as a comment (and ignored).
+# 
+# A set is made up of the following components:
+# 
+# A header line, in the form of "set X Y", where X is how often (in tenths of
+# a percent) you'd like Skittles to react to this set if it is triggered,
+# and Y is a simple identifier for the set's category (only used in logging).
+# Everything that follows a 'set' statement is considered to be a part of
+# that set until another 'set' statement is found.
+# 
+# A set can have any number of 'nick', 'trigger', 'reply', 'replyme' and
+# 'kick' statements associated with it. All of these use the rest of the line
+# as its input (as a single string, whitespace included).
+#
+# All 'nick' and 'trigger' statements provide a regular expression which are
+# applied to the nickname and message of incoming text (respectively). If a set
+# has zero 'nick' statements, all nicknames are considered a match, and the
+# same goes for 'trigger' and the message text. If a set is considered a match,
+# it will then roll against the set's probabability value (from the 'set'
+# line). If it succeeds, it will pick from a shuffled pool of all of this set's
+# reactions ('reply', 'replyme' and 'kick' entries). It will then filter the
+# reaction's text through the mods system, and then perform the action with the
+# final output.
+#
+# * 'reply' is the most basic reaction. It simply takes the output text and
+# says it in the IRC channel where the trigger occurred.
+# 
+# * 'replyme' works similarly to 'reply', except it uses /me (an emote).
+# 
+# * 'kick' will attempt to /kick the person who caused the trigger, using the
+# reply string as the reason.
+#
+# Anything in a reaction line can be filtered via the mod system by using
+# exclamation points as special markers, such as this: !WORD!
+#
+# Mods register themselves by using one or more words (typically in caps), and
+# when a reply is chosen with that word surrounded by !!, the mod asked to offer
+# a string to replace that !WORD!. If the trigger that caused the set to match
+# had a set of capturing parentheses, the mod has access to that data as well.
+#
+# !NICK! is a special marker which can be used in both 'trigger' and 'reply'
+# statements. If used in a trigger, it refers to the bot's current name. If
+# used in a reply, it refers to the person who triggered the set.
+#
+# Ordering note: The sets are evaluated in order for every incoming message.
+# This means that sets earlier in the file have higher priority, and can
+# 'steal' triggers from later sets. Make sure you order your sets accordingly.
+#
+# Please read the comments associated with the sample sets provided below!
+# 
+# ------------------------------------------------------------------------------
+
+# Our "hello world" example. This set detects when anyone in the channel says
+# a simple "hello" in a few forms (without any text before/after), and replies
+# 70% of the time with a really simple "hello" type response.
+
+set 700 Hello
+trigger ^hi$
+trigger ^hello$
+trigger ^sup$
+trigger ^yo$
+trigger ^heya$
+reply sup sup
+reply YO!
+reply heya
+reply hey
+reply hi
+reply hello
+reply hola
+
+# Someone is directly addressing the bot with a greeting, which should always
+# be given a polite reply in response (100% chance).
+
+set 1000 Hello
+trigger NICK!:?,? hello!?
+trigger hi !NICK!
+trigger hey !NICK!
+trigger hello !NICK!
+trigger sup !NICK!
+trigger yo !NICK!
+trigger whats up !NICK!
+reply hey hey
+reply hello
+reply sup sup
+
+# This set offers a 50% chance when someone specifically says 'brb' in the
+# channel to let them know how much the bot will miss them. This also shows
+# the first usage of an emote (replyme).
+
+set 500 BRB
+trigger ^brb$
+reply See you soon!
+replyme awaits !NICK!'s return.
+
+# Our first mod usage. This detects when a user pastes a Youtube video URL
+# into the channel, and uses the youtube mod (which registered !YOUTUBE!)
+# to find out what the title of the video is, which the mod will replace
+# the text "!YOUTUBE!" with. The emote usage here is just for more flavor.
+
+set 1000 Youtube
+trigger (https?:\/\/\w{0,3}.?youtube\.com\/watch\?(?:.+&)?v=[-_A-Za-z0-9]+)
+trigger (https?:\/\/\w{0,3}.?youtu\.be\/[-_A-Za-z0-9]+)
+replyme watches "!YOUTUBE!"
+
+# A command! These triggers are detecting when someone is directly requesting
+# the bot to perform an action, such as:
+#
+#     Skittles: find never gonna give you up
+#
+# This will invoke the "youtubesearch" mod and find the best hit for that
+# search string on Youtube, replacing !YOUTUBESEARCH! in the reply with a
+# custom string from the mod. This shows a mechanism to allow a mod to say
+# whatever it wants (instead of just replacing a single word in the reply).
+# Also, note the usage of capure parentheses to grab the string to search.
+
+set 1000 Youtube
+trigger ^!NICK!:?,?.*video\s+(.+)
+trigger ^!NICK!:?,?.*youtube\s+(.+)
+trigger ^!NICK!:?,?.*find\s+(.+)
+trigger ^!NICK!:?,?.*show\s+(.+)
+reply !YOUTUBESEARCH!
+
+# Another command, this time looking up definitions. The 'define' mod has
+# a silly feature where you can prepend fake definitions by adding them
+# to a "local_defines.txt" file. See local_defines.txt.example.
+
+set 1000 Define
+trigger ^!NICK!:?,? define (.+)
+reply !DEFINE!
+
+# A command to turn a string into morse code. The morse module allows you
+# to use any character/word you want as the "dot" and "dash".
+
+set 1000 Morse
+trigger ^!NICK!:?,? morse (.+)
+reply !MORSE!
+
+# A snarky command to display the list of choices from Google News' left
+# column list of "top stories".
+
+set 1000 News
+trigger ^!NICK!:?,? news
+reply All that matters in this world (in order of importance): !NEWS!
+
+# A command for searching the Guild Wars 2 wiki for a string, and getting
+# a URL response.
+
+set 1000 GW2Wiki
+trigger ^!NICK!:?,? wiki (.+)
+trigger ^!NICK!:?,? gw (.+)
+trigger ^!NICK!:?,? gw2 (.+)
+trigger ^!NICK!:?,? guildwars2 (.+)
+trigger ^!NICK!:?,? guildwars (.+)
+reply GW2Wiki: !WIKI!
+
+# Skittles comes with a madlibs engine, which allows for some very silly,
+# unique responses. By simply adding files into a 'madlibs' subdirectory,
+# you can randomly pull from a shuffled pool of those words in your replies.
+# This example has created madlibs/VIDEO1.txt (1, 2 and 3), which contain
+# lists of prefix/middle/suffixes for video game names (taken from an old
+# internet video game generator). This reply here creates a new video game
+# any time someone mentions them.
+
+set 1000 VideoGame
+trigger video game
+reply That game will never be as good as "!ML_VIDEO1! !ML_VIDEO2! !ML_VIDEO3!"
+
+# A silly test showing the 'kick' reaction. Shouting at a bot will not get you
+# very far. (Note: This will not appear to react if the bot is not an op).
+
+set 1000 ComeAtMeBro
+trigger ^!NICK!:?,?.*COME AT ME
+trigger ^!NICK!:?,? GET AT ME
+kick bro

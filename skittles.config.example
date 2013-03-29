@@ -1,0 +1,13 @@
+{
+    "channels"       : ["#test1", "#test2"],
+    "rcfiles"        : ["skittlesrc"],
+    "nickname"       : "SkittlesBot",
+    "host"           : "irc.example.com",
+    "port"           : 6667,
+    "all_op"         : false,
+    "reload"         : true,
+    "hello"          : "Hello everyone!",
+    "define_unknown" : "I have no idea what that is.",
+    "morse_codes"    : "x X",
+    "log"            : "log.csv"
+}
