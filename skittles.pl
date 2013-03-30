@@ -65,21 +65,6 @@ my $gBotNickname;
     # Initialize nickname
     $gBotNickname = $gConfig->{'nickname'};
 
-    # Register core Skittles mods
-    coreRegister();
-
-    # Register all other Skittles mods (from mods subdir)
-    my @modfiles = glob("mods/*.pm");
-    for my $modfile (sort @modfiles)
-    {
-        require $modfile;
-        my($modname) = ($modfile =~ m/([^\\\/]+).pm/i);
-        if(!defined(eval("${modname}::register();")))
-        {
-            die("failed to run ${modname}::register()\n");
-        }
-    }
-
     # Init logging
     logInit();
 
@@ -427,6 +412,21 @@ sub skittlesParse
 
 sub skittlesStartup
 {
+    # Register core Skittles mods
+    coreRegister();
+
+    # Register all other Skittles mods (from mods subdir)
+    my @modfiles = glob("mods/*.pm");
+    for my $modfile (sort @modfiles)
+    {
+        require $modfile;
+        my($modname) = ($modfile =~ m/([^\\\/]+).pm/i);
+        if(!defined(eval("${modname}::register();")))
+        {
+            die("failed to run ${modname}::register()\n");
+        }
+    }
+
     $gSkittlesResources = {
         sets => []
     };
