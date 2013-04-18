@@ -22,3 +22,12 @@ Additional modules used by optional mods (rename/remove the .pm from /mods if yo
 
 Once you have the right modules, copy/rename all .example files to not have .example appended, then
 edit those and run skittles.pl.
+
+Win32 Help
+----------
+
+Using ActiveState Perl (5.16.2 32bit), I successfully ran Skittles by preparing with:
+
+    ppm install POE
+    ppm install POE-Component-IRC
+    ppm install TeX-Hyphen
