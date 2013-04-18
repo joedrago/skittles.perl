@@ -236,7 +236,11 @@ sub poeRespond
 
     if($type eq 'say')
     {
-        $kernel->post(IRC => privmsg => $response->{'channel'}, $response->{'text'});
+        my @replies = split(/\n/, $response->{'text'});
+        for my $r (@replies)
+        {
+            $kernel->post(IRC => privmsg => $response->{'channel'}, $r);
+        }
     }
     elsif($type eq 'tell')
     {
@@ -419,6 +423,7 @@ sub skittlesStartup
     my @modfiles = glob("mods/*.pm");
     for my $modfile (sort @modfiles)
     {
+        print("Found mod: $modfile\n");
         require $modfile;
         my($modname) = ($modfile =~ m/([^\\\/]+).pm/i);
         if(!defined(eval("${modname}::register();")))
