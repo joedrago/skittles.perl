@@ -5,8 +5,9 @@ package skittles;
 use warnings;
 use strict;
 
-use POE;                 # base Perl Object Environment event system
-use POE::Component::IRC; # POE IRC client code
+use strict;
+use IPC::Open2;
+use Data::Dumper;
 use POSIX qw/strftime/;  # for fancy timestamps in logs
 use FindBin;             # for finding the config file
 use JSON::PP;            # for parsing the config file
@@ -15,7 +16,11 @@ use JSON::PP;            # for parsing the config file
 # Global Variables
 
 my $gConfig;
-my $gBotNickname;
+my $gReactToSelf = 0;
+my $gBotNickname = 0;
+my @gSkittlesTicks;
+
+my ($heartInput, $heartOutput);
 
 # -------------------------------------------------------------------------------------------------
 # Main
@@ -47,33 +52,61 @@ my $gBotNickname;
     {
         die "config ($configFilename) must contain valid JSON that evaluates to an object";
     }
-    for my $array (qw/channels rcfiles/)
+    for my $array (qw/rcfiles/)
     {
         unless(defined($gConfig->{$array}) and (ref($gConfig->{$array}) eq 'ARRAY'))
         {
             die "config ($configFilename) must supply an array of values named '$array'";
         }
     }
-    for my $string (qw/nickname host port/) # 'log' not required
-    {
-        unless(defined($gConfig->{$string}) and not ref($gConfig->{$string}))
-        {
-            die "config ($configFilename) must supply a single '$string' value";
-        }
-    }
-
-    # Initialize nickname
-    $gBotNickname = $gConfig->{'nickname'};
 
     # Init logging
     logInit();
 
-    # Load RC file and create POE session
-    ircLoad();
-    ircStartup();
+    # Prepare Skittles
+    skittlesStartup();
 
-    # This does all the work.
-    POE::Kernel->run();
+    # trigger debugging (leave commented out)
+    #my $triggers = [
+    #    "<\\#740716217878446144>(.*)"
+    #];
+    #my $match = skittlesMatchTrigger($triggers, "<#740716217878446144> yeet");
+    #print Dumper($match);
+    #exit();
+
+    # Initialize nickname
+    $gBotNickname = $gConfig->{'nickname'};
+
+    # Fire up the heart
+    $|++;
+    open2($heartOutput, $heartInput, "node heart/bin/heart");
+    while(my $rawJSON = <$heartOutput>) {
+        chomp($rawJSON);
+        # print("Got: $rawJSON\n");
+
+        my $ev = undef;
+        eval {
+            $ev = $jsonParser->loose(1)->decode($rawJSON);
+        };
+        if ($@) {
+            print("Bad Event JSON: $rawJSON\n");
+            next;
+        }
+
+        print("Event: " . Dumper($ev));
+        if(($ev->{'type'} eq 'msg')) {
+            my $context = {
+                channel => $ev->{'chan'},
+                nick => $ev->{'user'},
+                msg => $ev->{'text'},
+                admin => 0
+            };
+            logMessage($ev->{'user'}, $ev->{'text'});
+            skittlesReact($context);
+        } elsif($ev->{'type'} eq 'tick') {
+            processTicks();
+        }
+    }
 }
 exit();
 
@@ -122,140 +155,6 @@ sub poolNext
     return shift(@{ $pool->{'pool'} });
 }
 
-# -------------------------------------------------------------------------------------------------
-# POE Session Hooks
-
-sub poeSessionStart
-{
-    my $kernel  = $_[KERNEL];
-    my $heap    = $_[HEAP];
-    my $session = $_[SESSION];
-
-    $kernel->post( IRC => register => "all" );
-
-    my $connectOptions = {
-        Nick     => $gBotNickname,
-        Username => $gBotNickname,
-        Ircname  => $gBotNickname,
-        Server   => $gConfig->{'host'},
-        Port     => $gConfig->{'port'},
-    };
-
-    $kernel->post( IRC => connect => $connectOptions);
-}
-
-sub poeSessionConnect
-{
-    my $kernel = $_[KERNEL];
-    for my $channel (@{ $gConfig->{'channels'} })
-    {
-        $kernel->post( IRC => join => $channel );
-        if($gConfig->{'hello'} and not ref($gConfig->{'hello'}))
-        {
-            $kernel->post( IRC => privmsg => $channel, $gConfig->{'hello'});
-        }
-    }
-}
-
-sub poeSessionJoin
-{
-    my ($kernel, $who, $where) = @_[KERNEL, ARG0, ARG1];
-    my $nick = ( split /!/, $who )[0];
-    my $channel = $where;
-
-    if($gConfig->{'all_op'})
-    {
-        # Makes everyone an operator, if Skittles is
-        $kernel->post( IRC => mode => $channel, "+o", $nick);
-    }
-    print "$nick joined $channel\n";
-}
-
-sub poeSessionPrivate
-{
-    my ($kernel, $who, $where, $msg) = @_[KERNEL, ARG0, ARG1, ARG2];
-    my $nick = ( split /!/, $who )[0];
-    my $channel = $where;
-
-    print "Private Message From $nick: $msg\n";
-    my $context = {
-        kernel => $kernel,
-        channel => $channel,
-    };
-
-    if($gConfig->{'reload'})
-    {
-        if($msg =~ /reload/)
-        {
-            ircLoad();
-            ircTell($context, $nick, "Reloaded sets.");
-        }
-    }
-}
-
-sub poeSessionNick
-{
-    my ($kernel, $who, $newnick) = @_[KERNEL, ARG0, ARG1];
-    my $onick = ( split /!/, $who )[0];
-    my $nnick = ( split /!/, $newnick )[0];
-
-    if($onick eq $gBotNickname)
-    {
-        $gBotNickname = $nnick;
-        print "New Bot Nick Detected: $nnick\n";
-    }
-
-    print "($onick eq $gBotNickname) $nnick\n";
-}
-
-sub poeSessionPublic
-{
-    my ( $kernel, $who, $where, $msg ) = @_[ KERNEL, ARG0, ARG1, ARG2 ];
-    my $nick = ( split /!/, $who )[0];
-    my $channel = $where->[0];
-
-    my $ts = scalar localtime;
-    print " [$ts] <$nick:$channel> $msg\n";
-
-    my $context = {
-        kernel => $kernel,
-        channel => $channel,
-        nick => $nick,
-        msg => $msg,
-        admin => 0
-    };
-    logMessage($nick, $msg);
-    skittlesReact($context);
-}
-
-sub poeRespond
-{
-    my $kernel   = $_[KERNEL];
-    my $response = $_[ARG0];
-    my $type     = $response->{'type'};
-
-    if($type eq 'say')
-    {
-        my @replies = split(/\n/, $response->{'text'});
-        for my $r (@replies)
-        {
-            $kernel->post(IRC => privmsg => $response->{'channel'}, $r);
-        }
-    }
-    elsif($type eq 'tell')
-    {
-        $kernel->post(IRC => privmsg => $response->{'nick'}, $response->{'text'});
-    }
-    elsif($type eq 'kick')
-    {
-        $kernel->post(IRC => kick => $response->{'channel'}, $response->{'nick'}, $response->{'text'});
-    }
-    elsif($type eq 'emote')
-    {
-        $kernel->post(IRC => privmsg => $response->{'channel'}, chr(1) . "ACTION " . $response->{'text'} . chr(1) );
-    }
-}
-
 # ---------------------------------------------------------------------------------------
 # Core mods
 
@@ -282,6 +181,7 @@ sub coreRegister
 
 my $gSkittlesResources;
 my %gSkittlesMods;
+my @gSkittlesHooks;
 
 sub skittlesRegisterMod
 {
@@ -297,9 +197,32 @@ sub skittlesRegisterMod
     print "Registered Mod: $key\n";
 }
 
+sub skittlesRegisterHook
+{
+    my($func) = @_;
+
+    push(@gSkittlesHooks, $func);
+}
+
+sub skittlesRegisterTick
+{
+    my($func) = @_;
+
+    push(@gSkittlesTicks, $func);
+}
+
 # Shortcuts for mods to use
-sub register { return skittlesRegisterMod(@_); } # alias
-sub config   { return $gConfig->{shift(@_)};   }
+sub register    { return skittlesRegisterMod(@_);  } # alias
+sub hook        { return skittlesRegisterHook(@_); } # alias
+sub tick        { return skittlesRegisterTick(@_); } # alias
+sub broadcast   { return discordBroadcast(@_);     } # alias
+sub config      { return $gConfig->{shift(@_)};    }
+
+sub modPoolNext
+{
+    my ($mod) = @_;
+    return poolNext($gSkittlesMods{$mod}->{'data'});
+}
 
 sub skittlesMatchNick
 {
@@ -335,6 +258,8 @@ sub skittlesMatchTrigger
             if(defined($capture))
             {
                 $ret->{'capture'} = $capture;
+                $ret->{'capture'} =~ s/^\s+//g;
+                $ret->{'capture'} =~ s/\s+$//g;
             }
             $ret->{'trigger'} = $trigger;
             return $ret;
@@ -356,16 +281,28 @@ sub skittlesParse
         next if($line =~ m/^\s*#/); # Skip comments
         next if($line =~ m/^\s*$/); # Skip whitespace-only lines
 
-        if($line =~ m/^set\s+(\d+)\s+(\S+)/i)
+        if($line =~ m/^set([qs])?\s+(\d+)\s+(\S+)/i)
         {
-            my($weight, $category) = ($1, $2);
+            my($q, $weight, $category) = ($1, $2, $3);
+            my $quick = 0;
+            my $split = 0;
+            if($q eq 'q') {
+                $quick = 1;
+            }
+            if($q eq 's') {
+                $quick = 1;
+                $split = 1;
+            }
 
             if($weight > 0)
             {
                 $currentSet = {
                     category => $category,
                     weight => $weight,
+                    quick => $quick,
+                    split => $split,
                     nicks => [],
+                    channels => [],
                     triggers => [],
                     pool => poolCreate([]),
                 };
@@ -386,6 +323,11 @@ sub skittlesParse
             my $nick = $1;
             push(@{ $currentSet->{'nicks'} }, $nick);
         }
+        elsif($line =~ m/^channel\s+(.+)$/i)
+        {
+            my $channel = $1;
+            push(@{ $currentSet->{'channels'} }, $channel);
+        }
         elsif($line =~ m/^trigger\s+(.+)$/i)
         {
             my $trigger = $1;
@@ -394,7 +336,7 @@ sub skittlesParse
         elsif($line =~ m/^replyme\s+(.+)$/i)
         {
             my $reply = $1;
-            $reply = "ACTION $reply";
+            $reply = "*$reply*";
             poolPush($currentSet->{'pool'}, $reply);
         }
         elsif($line =~ m/^kick\s+(.+)$/i)
@@ -406,6 +348,7 @@ sub skittlesParse
         elsif($line =~ m/^reply\s+(.+)$/i)
         {
             my $reply = $1;
+            $reply =~ s/\\n/\n/g;
             poolPush($currentSet->{'pool'}, $reply);
         }
     }
@@ -445,9 +388,28 @@ sub skittlesStartup
     }
 }
 
+sub splitWords
+{
+    my ($query) = @_;
+    $query =~ s/^\s*//g;
+    $query =~ s/\s*$//g;
+    $query =~ s/[^a-zA-Z_]//g;
+    $query = lc($query);
+
+    my @words = map { chomp; $_ } `/home/joe/private/skittles/wordsplit \"$query\"`;
+    my $result = join(" ", map { ucfirst($_) } @words);
+    print("splitWords returned: $result\n");
+    return $result;
+}
+
 sub skittlesReact
 {
     my ($context) = @_;
+
+    for my $hook (@gSkittlesHooks)
+    {
+        &{ $hook }($context);
+    }
 
     my $nick = $context->{'nick'};
     my $spoken_text = $context->{'msg'};
@@ -457,6 +419,7 @@ sub skittlesReact
     {
         my $failedMod = undef;
         next unless(skittlesMatchNick($s->{'nicks'}, $context->{'nick'}));
+        next unless(skittlesMatchNick($s->{'channels'}, $context->{'channel'}));
 
         my $match = skittlesMatchTrigger($s->{'triggers'}, $context->{'msg'});
         next unless(defined($match));
@@ -477,9 +440,21 @@ sub skittlesReact
             fired => ($sayit) ? 'hit' : 'miss',
         };
 
+        my $wEnabled = 0;
+        if($context->{'msg'} =~ /\#w\b/)
+        {
+            $wEnabled = 1;
+        }
+
         if($sayit)
         {
+            my $quick = $s->{'quick'};
+            my $split = $s->{'split'};
             my $replybase = poolNext($s->{'pool'}); # Grab the next reply in the pool for this set
+
+            if($split) {
+                $context->{'capture'} = splitWords($context->{'capture'});
+            }
 
             my $reply = $replybase;
             for my $key (keys(%gSkittlesMods))
@@ -490,8 +465,8 @@ sub skittlesReact
                     my $replacement = &{ $mod->{'func'} }($context, $key, $mod->{'data'});
                     if(defined($replacement))
                     {
-                        $replacement =~ s/^\s+//g;
-                        $replacement =~ s/\s+$//g;
+                        # $replacement =~ s/^\s+//g;
+                        # $replacement =~ s/\s+$//g;
                         $reply =~ s/!\Q$key\E!/$replacement/;
                     }
                     else
@@ -509,27 +484,21 @@ sub skittlesReact
                 next;
             }
 
+            if($wEnabled)
+            {
+                my @pieces = split(/http/, $reply);
+                $pieces[0] =~ tr/rlRL/wwWW/;
+                $reply = join("http", @pieces);
+            }
+
             $logEntry->{'replybase'} = $replybase;
             $logEntry->{'reply'} = $reply;
 
-            if($reply =~ /^KICKPLZ (.+)$/)
-            {
-                my ($msg) = ($1);
-                ircKick($context, $nick, $msg);
-                $logEntry->{'replytype'} = 'kick';
-            }
-            elsif($reply =~ /^ACTION (.+)$/)
-            {
-                my($emote) = ($1);
-                ircEmote($context, $emote);
-                $logEntry->{'replytype'} = 'emote';
-            }
-            else
-            {
-                ircSay($context, $reply);
-                logMessage($gBotNickname, $reply);
-                $logEntry->{'replytype'} = 'say';
-            }
+            # $reply =~ s/`/\n/g;
+
+            discordSay($context->{'channel'}, $reply, $quick);
+            logMessage($gBotNickname, $reply, $quick);
+            $logEntry->{'replytype'} = 'say';
             logAppend($logEntry);
             return 1;
         }
@@ -543,91 +512,62 @@ sub skittlesReact
     return 0;
 }
 
-# -------------------------------------------------------------------------------------------------
-# IRC Session Manipulation
+sub processTicks
+{
+    my $context = {};
+    for my $tick (@gSkittlesTicks)
+    {
+        &{ $tick }($context);
+    }
+}
 
-sub ircLoad
+# -------------------------------------------------------------------------------------------------
+# Discord
+
+sub discordLoad
 {
     skittlesStartup();
 }
 
-sub ircStartup
+sub discordSay
 {
-    my $ircSession = new POE::Component::IRC("IRC");
-    my $inlineStates = {
-        _start => \&poeSessionStart,
-        irc_001 => \&poeSessionConnect,
-        irc_join => \&poeSessionJoin,
-        irc_msg => \&poeSessionPrivate,
-        irc_nick => \&poeSessionNick,
-        irc_public => \&poeSessionPublic,
-        respond => \&poeRespond,
-    };
-    POE::Session->create(inline_states => $inlineStates);
-}
+    my($channel, $text, $quick) = @_;
 
-sub ircDelayResponse
-{
-    my($context, $response) = @_;
-
-    my $len = length($response->{'text'});
+    my $len = length($text);
     my $delay =
         1              # time it took Skittles to 'read' the text he is replying to
       + (0.05 * $len); # time it took Skittles to "type" the reply
 
-    if($delay > 4)
+    if($delay > 2)
     {
         # clamping delay, as it was getting as long as 13 seconds at times
-        $delay = 4;
+        $delay = 2;
     }
 
-    printf("Delaying type '%s' by %2.2f seconds [%d chars]: %s\n", $response->{'type'}, $delay, $len, $response->{'text'});
+    if($quick) {
+        $delay = 0;
+    }
 
-    $response->{'delay'} = $delay;
-    $response->{'channel'} = $context->{'channel'};
-    $context->{'kernel'}->delay(respond => $delay, $response);
+    $delay = int($delay * 1000);
+    printf("Delaying by %d ms [%d chars]: %s\n", $delay, $len, $text);
+
+    my $sev = {
+        type => 'msg',
+        chan => $channel,
+        text => $text,
+        delay => $delay,
+    };
+    print $heartInput encode_json($sev);
+    print $heartInput "\n";
 }
 
-sub ircEmote
+sub discordBroadcast
 {
-    my($context, $text) = @_;
-    my $response = {
-        type => 'emote',
-        text => $text,
-    };
-    ircDelayResponse($context, $response);
-}
-
-sub ircKick
-{
-    my($context, $nick, $text) = @_;
-    my $response = {
-        type => 'kick',
-        nick => $nick,
-        text => $text,
-    };
-    ircDelayResponse($context, $response);
-}
-
-sub ircSay
-{
-    my($context, $text) = @_;
-    my $response = {
-        type => 'say',
-        text => $text,
-    };
-    ircDelayResponse($context, $response);
-}
-
-sub ircTell
-{
-    my($context, $nick, $text) = @_;
-    my $response = {
-        type => 'tell',
-        nick => $nick,
-        text => $text,
-    };
-    ircDelayResponse($context, $response);
+    my($text, $quick) = @_;
+    for my $channel (@{ $gConfig->{'broadcasts'} })
+    {
+        discordSay($channel, $text, $quick);
+    }
 }
 
 # -------------------------------------------------------------------------------------------------
