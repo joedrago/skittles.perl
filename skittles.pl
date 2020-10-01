@@ -8,7 +8,6 @@ use strict;
 use strict;
 use IPC::Open2;
 use Data::Dumper;
-use POSIX qw/strftime/;  # for fancy timestamps in logs
 use FindBin;             # for finding the config file
 use JSON::PP;            # for parsing the config file
 
@@ -60,9 +59,6 @@ my ($heartInput, $heartOutput);
         }
     }
 
-    # Init logging
-    logInit();
-
     # Prepare Skittles
     skittlesStartup();
 
@@ -101,7 +97,6 @@ my ($heartInput, $heartOutput);
                 msg => $ev->{'text'},
                 admin => 0
             };
-            logMessage($ev->{'user'}, $ev->{'text'});
             skittlesReact($context);
         } elsif($ev->{'type'} eq 'tick') {
             processTicks();
@@ -429,17 +424,6 @@ sub skittlesReact
         my $chance = int(rand() * 1000);
         my $sayit = ($chance < $s->{'weight'});
 
-        my $logEntry = {
-            type => 'match',
-            srcnick => $nick,
-            srctext => $spoken_text,
-            category => $s->{'category'},
-            trigger => $match->{'trigger'},
-            chance => $chance,
-            threshold => $s->{'weight'},
-            fired => ($sayit) ? 'hit' : 'miss',
-        };
-
         my $wEnabled = 0;
         if($context->{'msg'} =~ /\#w\b/)
         {
@@ -491,21 +475,10 @@ sub skittlesReact
                 $reply = join("http", @pieces);
             }
 
-            $logEntry->{'replybase'} = $replybase;
-            $logEntry->{'reply'} = $reply;
-
             # $reply =~ s/`/\n/g;
 
             discordSay($context->{'channel'}, $reply, $quick);
-            logMessage($gBotNickname, $reply, $quick);
-            $logEntry->{'replytype'} = 'say';
-            logAppend($logEntry);
             return 1;
-        }
-        else
-        {
-            # Log the failed chance
-            logAppend($logEntry);
         }
     }
 
@@ -568,72 +541,5 @@ sub discordBroadcast
     {
         discordSay($channel, $text, $quick);
     }
-}
-
-# -------------------------------------------------------------------------------------------------
-# Logging
-
-sub LOG_COLUMNS() { qw/timestamp datetime date dayofweek type srcnick srctext category trigger replytype replybase reply chance threshold fired/ }
-
-sub logCreate
-{
-    return if(-f $gConfig->{'log'});
-
-    my $fh;
-    open($fh, '>', $gConfig->{'log'}) or die "cannot open ".$gConfig->{'log'}." for write";
-    my @quotedColumns = map { "\"$_\"" } LOG_COLUMNS;
-    my $line = join(",", @quotedColumns) . "\n";
-    print $fh $line;
-    close($fh);
-}
-
-sub logInit
-{
-    logCreate();
-}
-
-sub logMessage
-{
-    my($nick, $text) = @_;
-
-    logAppend({
-            type => 'message',
-            srcnick => $nick,
-            srctext => $text,
-            });
-}
-
-sub logAppend
-{
-    my($entry) = @_;
-    my $now = time();
-
-    $entry->{'timestamp'} = $now;
-    $entry->{'datetime'} = strftime("%F %T", localtime($now));
-    $entry->{'date'} = strftime("%F", localtime($now));
-    $entry->{'dayofweek'} = strftime("%w", localtime($now));
-
-    logCreate();
-
-    my @outputColumns;
-    for my $col (LOG_COLUMNS)
-    {
-        my $text = "";
-        if(defined($entry->{$col}))
-        {
-            $text = $entry->{$col};
-        }
-        $text =~ s/\r/ /g;
-        $text =~ s/\n/ /g;
-        $text =~ s/"/""/g;
-        $text = "\"$text\"";
-        push(@outputColumns, $text);
-    }
-
-    my $fh;
-    open($fh, '>>', $gConfig->{'log'}) or die "cannot open ".$gConfig->{'log'}." for write";
-    my $line = join(",", @outputColumns) . "\n";
-    print $fh $line;
-    close($fh);
 }
 
