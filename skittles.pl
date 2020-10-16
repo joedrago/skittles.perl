@@ -388,13 +388,24 @@ sub splitWords
     my ($query) = @_;
     $query =~ s/^\s*//g;
     $query =~ s/\s*$//g;
-    $query =~ s/[^a-zA-Z_]//g;
-    $query = lc($query);
+    $query =~ s/[^a-zA-Z0-9_]//g;
 
-    my @words = map { chomp; $_ } `/home/joe/private/skittles/wordsplit \"$query\"`;
-    my $result = join(" ", map { ucfirst($_) } @words);
-    print("splitWords returned: $result\n");
-    return $result;
+    if(($query =~ /[A-Z]/) and ($query =~ /[a-z]/)) {
+        # Mixed case; simply honor their requested split
+
+        $query =~ s/([A-Z])/ $1/g;
+        $query =~ s/^\s*//g;
+        $query =~ s/\s*$//g;
+        return $query;
+    } else {
+        # All one case; hand over to wordsplit
+        $query = lc($query);
+
+        my @words = map { chomp; $_ } `/home/joe/private/skittles/wordsplit \"$query\"`;
+        my $result = join(" ", map { ucfirst($_) } @words);
+        print("splitWords returned: $result\n");
+        return $result;
+    }
 }
 
 sub skittlesReact
@@ -502,11 +513,22 @@ sub discordLoad
     skittlesStartup();
 }
 
+sub discordEvent
+{
+    my($ev) = @_;
+    print $heartInput encode_json($ev);
+    print $heartInput "\n";
+}
+
 sub discordSay
 {
     my($channel, $text, $quick) = @_;
 
     my $len = length($text);
+    if($len < 1) {
+        return;
+    }
+
     my $delay =
         1              # time it took Skittles to 'read' the text he is replying to
       + (0.05 * $len); # time it took Skittles to "type" the reply
@@ -530,8 +552,7 @@ sub discordSay
         text => $text,
         delay => $delay,
     };
-    print $heartInput encode_json($sev);
-    print $heartInput "\n";
+    discordEvent($sev);
 }
 
 sub discordBroadcast
