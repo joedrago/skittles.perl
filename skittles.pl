@@ -18,6 +18,7 @@ my $gConfig;
 my $gReactToSelf = 0;
 my $gBotNickname = 0;
 my @gSkittlesTicks;
+my @gSkittlesFastTicks;
 
 my ($heartInput, $heartOutput);
 
@@ -89,7 +90,7 @@ my ($heartInput, $heartOutput);
             next;
         }
 
-        print("Event: " . Dumper($ev));
+        # print("Event: " . Dumper($ev));
         if(($ev->{'type'} eq 'msg')) {
             my $context = {
                 channel => $ev->{'chan'},
@@ -98,6 +99,8 @@ my ($heartInput, $heartOutput);
                 admin => 0
             };
             skittlesReact($context);
+        } elsif($ev->{'type'} eq 'ftick') {
+            processFastTicks();
         } elsif($ev->{'type'} eq 'tick') {
             processTicks();
         }
@@ -206,12 +209,21 @@ sub skittlesRegisterTick
     push(@gSkittlesTicks, $func);
 }
 
+sub skittlesRegisterFastTick
+{
+    my($func) = @_;
+
+    push(@gSkittlesFastTicks, $func);
+}
+
 # Shortcuts for mods to use
-sub register    { return skittlesRegisterMod(@_);  } # alias
-sub hook        { return skittlesRegisterHook(@_); } # alias
-sub tick        { return skittlesRegisterTick(@_); } # alias
-sub broadcast   { return discordBroadcast(@_);     } # alias
-sub config      { return $gConfig->{shift(@_)};    }
+sub register    { return skittlesRegisterMod(@_);      } # alias
+sub hook        { return skittlesRegisterHook(@_);     } # alias
+sub tick        { return skittlesRegisterTick(@_);     } # alias
+sub ftick       { return skittlesRegisterFastTick(@_); } # alias
+sub broadcast   { return discordBroadcast(@_);         } # alias
+sub say         { return discordSay(@_);               } # alias
+sub config      { return $gConfig->{shift(@_)};        }
 
 sub modPoolNext
 {
@@ -500,6 +512,15 @@ sub processTicks
 {
     my $context = {};
     for my $tick (@gSkittlesTicks)
+    {
+        &{ $tick }($context);
+    }
+}
+
+sub processFastTicks
+{
+    my $context = {};
+    for my $tick (@gSkittlesFastTicks)
     {
         &{ $tick }($context);
     }
